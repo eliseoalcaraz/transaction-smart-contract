@@ -1,4 +1,4 @@
-# AgreementLedger Smart Contract
+# AgreementLedger Smart Contract for Sabot
 
 `AgreementLedger` is a Solidity smart contract that provides a complete system for users to register, create on-chain agreements, and report on those agreements. It features a built-in utility token, "Sabot Token" (SBT), which is used to power the ecosystem.
 
