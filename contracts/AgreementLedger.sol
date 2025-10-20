@@ -38,7 +38,7 @@ contract AgreementLedger is Ownable {
     struct Agreement {
         address partyA;
         address partyB;
-        string details;       // hashed details or description
+        bytes32 details;       // hashed details or description
         uint256 timestamp;
     }
 
@@ -56,7 +56,7 @@ contract AgreementLedger is Ownable {
         uint256 totalFee,
         uint256 burned,
         uint256 toDev,
-        string details,
+        bytes32 details,
         uint256 timestamp
     );
 
@@ -126,19 +126,18 @@ contract AgreementLedger is Ownable {
     // ==================================================
     // AGREEMENT CREATION
     // ==================================================
-    function createAgreement(address otherParty, string calldata details) external {
+    function createAgreement(address otherParty, bytes32 detailsHash) external {
         require(registered[msg.sender], "Sender not registered");
         require(registered[otherParty], "Other party not registered");
         require(msg.sender != otherParty, "Cannot agree with self");
 
-        // Each pays verification fee
         _processVerificationFee(msg.sender);
         _processVerificationFee(otherParty);
 
         agreements.push(Agreement({
             partyA: msg.sender,
             partyB: otherParty,
-            details: details,
+            details: detailsHash,
             timestamp: block.timestamp
         }));
 
@@ -148,7 +147,7 @@ contract AgreementLedger is Ownable {
             VERIFY_FEE * 2,
             (VERIFY_FEE * 2 * BURN_PERCENT) / 100,
             (VERIFY_FEE * 2 * (100 - BURN_PERCENT)) / 100,
-            details,
+            detailsHash,
             block.timestamp
         );
     }
