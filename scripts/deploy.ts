@@ -4,18 +4,16 @@ const { ethers } = await network.connect();
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  console.log(
-    `Deploying contract with the account: ${deployer.address}`
-  );
+  console.log(`Deploying contract with the account: ${deployer.address}`);
 
-  const TransactionLedger = await ethers.getContractFactory("TransactionLedger");
+  const AgreementLedger = await ethers.getContractFactory("AgreementLedger");
 
-  console.log("Deploying TransactionLedger...");
-  const ledger = await TransactionLedger.deploy();
+  console.log("Deploying AgreementLedger...");
+  const ledger = await AgreementLedger.deploy(deployer.address);
   await ledger.waitForDeployment();
 
   const contractAddress = await ledger.getAddress();
-  console.log(`TransactionLedger deployed to: ${contractAddress}`);
+  console.log(`AgreementLedger deployed to: ${contractAddress}`);
 }
 
 main().catch((error) => {
