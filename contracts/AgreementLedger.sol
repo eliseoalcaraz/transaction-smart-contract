@@ -24,6 +24,7 @@ contract AgreementLedger is Ownable {
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => uint256[]) private agreementsByParty;
 
     // ================
     // AGREEMENT LOGIC
@@ -140,6 +141,11 @@ contract AgreementLedger is Ownable {
             details: detailsHash,
             timestamp: block.timestamp
         }));
+        uint256 id = agreements.length - 1;
+
+        // Index the agreement for both parties
+        agreementsByParty[msg.sender].push(id);
+        agreementsByParty[otherParty].push(id);
 
         emit AgreementCreated(
             msg.sender,
@@ -175,4 +181,16 @@ contract AgreementLedger is Ownable {
     function getAgreements() external view returns (Agreement[] memory) {
         return agreements;
     }
+
+    function getAgreementsByParty(address party) external view returns (Agreement[] memory) {
+        uint256[] storage ids = agreementsByParty[party];
+        Agreement[] memory result = new Agreement[](ids.length);
+
+        for (uint256 i = 0; i < ids.length; i++) {
+            result[i] = agreements[ids[i]];
+        }
+
+        return result;
+    }
+
 }
