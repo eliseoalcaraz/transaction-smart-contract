@@ -1,57 +1,97 @@
-# Sample Hardhat 3 Beta Project (`mocha` and `ethers`)
+# AgreementLedger Smart Contract
 
-This project showcases a Hardhat 3 Beta project using `mocha` for tests and the `ethers` library for Ethereum interactions.
+`AgreementLedger` is a Solidity smart contract that provides a complete system for users to register, create on-chain agreements, and report on those agreements. It features a built-in utility token, "Sabot Token" (SBT), which is used to power the ecosystem.
 
-To learn more about the Hardhat 3 Beta, please visit the [Getting Started guide](https://hardhat.org/docs/getting-started#getting-started-with-hardhat-3). To share your feedback, join our [Hardhat 3 Beta](https://hardhat.org/hardhat3-beta-telegram-group) Telegram group or [open an issue](https://github.com/NomicFoundation/hardhat/issues/new) in our GitHub issue tracker.
+The core loop involves users registering to receive a free token allotment, then spending those tokens to create verified agreements with other users. A portion of every agreement fee is burned (creating a deflationary mechanism), and the rest is sent to a developer wallet as a service fee.
 
-## Project Overview
+This project is built using Hardhat and is configured for deployment on the **Lisk Sepolia Testnet**.
 
-This example project includes:
+---
 
-- A simple Hardhat configuration file.
-- Foundry-compatible Solidity unit tests.
-- TypeScript integration tests using `mocha` and ethers.js
-- Examples demonstrating how to connect to different types of networks, including locally simulating OP mainnet.
+## Features
 
-## Usage
+* **SBT Utility Token:** A simple ERC20-like token (`name`, `symbol`, `decimals`, `balanceOf`, `transfer`, `approve`) built directly into the contract.
+* **User Registration:** A one-time `registerUser()` function that acts as an entry point, granting new users **100 SBT** to start.
+* **Agreement Creation:** Allows any two registered users to create an immutable, timestamped agreement record on the blockchain.
+* **Fee Mechanism:** To create an agreement, **both** parties must pay a `VERIFY_FEE` of **10 SBT**.
+* **Deflation & Revenue:** The 20 SBT total fee is split:
+    * **80% (16 SBT)** is transferred to the developer wallet.
+    * **20% (4 SBT)** is burned, reducing the total supply of SBT.
+* **Reporting System:** If a dispute arises, either party of an agreement can call `reportIssue()` to create a public, on-chain report against the other party.
+* **Admin Controls:** The contract is `Ownable` (via OpenZeppelin), allowing the owner to update the `devWallet` address.
 
-### Running Tests
+---
 
-To run all the tests in the project, execute the following command:
+## How It Works: User Flow
 
-```shell
-npx hardhat test
-```
+1.  **Deployment:** The contract owner deploys the `AgreementLedger.sol` contract, passing a `_devWallet` address to the constructor. The owner's address receives an initial supply of 1,000,000 SBT.
+2.  **Registration:**
+    * Alice calls `registerUser()`. The contract checks she isn't already registered, marks her as `registered`, and mints 100 SBT to her balance.
+    * Bob calls `registerUser()` and also receives 100 SBT.
+3.  **Agreement Creation:**
+    * Alice and Bob agree to terms off-chain. They hash the details of their agreement (e.g., using `keccak256`) to produce a `bytes32` hash.
+    * Alice calls `createAgreement(bob_address, details_hash)`.
+4.  **Fee Processing:**
+    * The `createAgreement` function automatically processes the fees for **both** parties in a single transaction.
+    * It deducts 10 SBT from Alice's balance (2 SBT burned, 8 SBT sent to `devWallet`).
+    * It deducts 10 SBT from Bob's balance (2 SBT burned, 8 SBT sent to `devWallet`).
+    * **Note:** This requires both users to have at least 10 SBT. It works by having the contract's internal functions (`_transfer`, `_burn`) directly manipulate the `balanceOf` mapping, bypassing the need for Bob to pre-approve the contract.
+5.  **Logging:** A new `Agreement` struct is created and stored on-chain, and an `AgreementCreated` event is emitted.
+6.  **Reporting (Optional):**
+    * Bob fails to honor the agreement.
+    * Alice calls `reportIssue(agreementId, bob_address, "Did not fulfill terms")`.
+    * A new `Report` struct is created, and a `ReportCreated` event is emitted. This data can be used by dApps to build reputation systems.
 
-You can also selectively run the Solidity or `mocha` tests:
+---
 
-```shell
-npx hardhat test solidity
-npx hardhat test mocha
-```
+## Core Contract Logic
 
-### Make a deployment to Sepolia
+### State Variables
 
-This project includes an example Ignition module to deploy the contract. You can deploy this module to a locally simulated chain or to Sepolia.
+* `VERIFY_FEE`: `10 * 10**18` (10 SBT)
+* `BURN_PERCENT`: `20` (20%)
+* `devWallet`: The address that receives 80% of all fees.
+* `registered`: `mapping(address => bool)` to track active users.
+* `agreements`: `Agreement[]` array storing all agreements.
+* `reports`: `Report[]` array storing all reports.
 
-To run the deployment to a local chain:
+### Key Functions
 
-```shell
-npx hardhat ignition deploy ignition/modules/Counter.ts
-```
+* `registerUser()`: `external`
+    * Mints 100 SBT to `msg.sender`.
+    * Requires user is not already registered.
 
-To run the deployment to Sepolia, you need an account with funds to send the transaction. The provided Hardhat configuration includes a Configuration Variable called `SEPOLIA_PRIVATE_KEY`, which you can use to set the private key of the account you want to use.
+* `createAgreement(address otherParty, bytes32 detailsHash)`: `external`
+    * Requires `msg.sender` and `otherParty` are both registered.
+    * Requires `msg.sender != otherParty`.
+    * Calls `_processVerificationFee(msg.sender)`.
+    * Calls `_processVerificationFee(otherParty)`.
+    * Creates and stores the new `Agreement`.
 
-You can set the `SEPOLIA_PRIVATE_KEY` variable using the `hardhat-keystore` plugin or by setting it as an environment variable.
+* `_processVerificationFee(address user)`: `internal`
+    * Calculates `burnAmount` (2 SBT) and `devAmount` (8 SBT).
+    * Calls `_burn(user, burnAmount)`.
+    * Calls `_transfer(user, devWallet, devAmount)`.
 
-To set the `SEPOLIA_PRIVATE_KEY` config variable using `hardhat-keystore`:
+* `reportIssue(uint256 agreementId, address reportedParty, bytes32 reason)`: `external`
+    * Requires `msg.sender` is one of the parties in the agreement.
+    * Requires `reportedParty` is the *other* party in the agreement.
+    * Creates and stores the new `Report`.
 
-```shell
-npx hardhat keystore set SEPOLIA_PRIVATE_KEY
-```
+* `setDevWallet(address _new)`: `external onlyOwner`
+    * Allows the contract owner to change the `devWallet` address.
 
-After setting the variable, you can run the deployment with the Sepolia network:
+---
 
-```shell
-npx hardhat ignition deploy --network sepolia ignition/modules/Counter.ts
-```
+## Local Development & Deployment
+
+This project is a Hardhat environment.
+
+### 1. Setup
+
+Clone the repository and install dependencies:
+
+```bash
+git clone <repository_url>
+cd agreement-ledger
+pnpm install
