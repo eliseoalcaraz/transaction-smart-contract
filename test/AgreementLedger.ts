@@ -165,4 +165,695 @@ describe("AgreementLedger", function () {
     expect(user1Agreements[0].details).to.equal(hash1);
     expect(user1Agreements[1].details).to.equal(hash2);
   });
+
+  // =========================
+  // ESCROW TESTS
+  // =========================
+
+  describe("Escrow Functions", function () {
+    let agreementId: number;
+    let valueHash: string;
+
+    beforeEach(async function () {
+      // Setup: Create an agreement for escrow tests
+      await ledger.connect(user1).registerUser();
+      await ledger.connect(user2).registerUser();
+
+      const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Test Agreement"));
+      await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+      agreementId = 0;
+      valueHash = ethers.keccak256(ethers.toUtf8Bytes("Deliverable description"));
+    });
+
+    describe("createEscrow", function () {
+      it("should create crypto escrow with ETH", async function () {
+        const escrowAmount = ethers.parseEther("1.0");
+        const expirationDays = 30;
+
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          0, // Crypto type
+          expirationDays,
+          { value: escrowAmount }
+        );
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.agreementId).to.equal(agreementId);
+        expect(escrow.initiator).to.equal(user1.address);
+        expect(escrow.ethAmount).to.equal(escrowAmount);
+        expect(escrow.valueHash).to.equal(valueHash);
+        expect(escrow.deliverableType).to.equal(0); // Crypto
+        expect(escrow.status).to.equal(0); // Pending
+      });
+
+      it("should create bank transfer escrow without ETH", async function () {
+        const expirationDays = 30;
+
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          1, // BankTransfer type
+          expirationDays
+        );
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.ethAmount).to.equal(0);
+        expect(escrow.deliverableType).to.equal(1); // BankTransfer
+      });
+
+      it("should create file deliverable escrow", async function () {
+        const fileHash = ethers.keccak256(ethers.toUtf8Bytes("QmFileHashIPFS"));
+
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          fileHash,
+          2, // FileDeliverable type
+          30
+        );
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.deliverableType).to.equal(2); // FileDeliverable
+        expect(escrow.valueHash).to.equal(fileHash);
+      });
+
+      it("should revert if creating crypto escrow without ETH", async function () {
+        await expect(
+          ledger.connect(user1).createEscrow(agreementId, valueHash, 0, 30)
+        ).to.be.revertedWith("ETH required for crypto deliverable");
+      });
+
+      it("should revert if not party to agreement", async function () {
+        await ledger.connect(user3).registerUser();
+
+        await expect(
+          ledger.connect(user3).createEscrow(
+            agreementId,
+            valueHash,
+            1,
+            30
+          )
+        ).to.be.revertedWith("Not party to agreement");
+      });
+
+      it("should add escrow to user's list", async function () {
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          1,
+          30
+        );
+
+        const userEscrows = await ledger.getEscrowsByUser(user1.address);
+        expect(userEscrows.length).to.equal(1);
+        expect(userEscrows[0]).to.equal(0);
+      });
+    });
+
+    describe("joinEscrow", function () {
+      beforeEach(async function () {
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          1, // BankTransfer
+          30
+        );
+      });
+
+      it("should allow participant to join escrow", async function () {
+        await ledger.connect(user2).joinEscrow(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.participant).to.equal(user2.address);
+        expect(escrow.status).to.equal(1); // Active
+      });
+
+      it("should revert if not party to agreement", async function () {
+        await ledger.connect(user3).registerUser();
+
+        await expect(
+          ledger.connect(user3).joinEscrow(0)
+        ).to.be.revertedWith("Not party to agreement");
+      });
+
+      it("should revert if initiator tries to join own escrow", async function () {
+        await expect(
+          ledger.connect(user1).joinEscrow(0)
+        ).to.be.revertedWith("Cannot join own escrow");
+      });
+
+      it("should add escrow to participant's list", async function () {
+        await ledger.connect(user2).joinEscrow(0);
+
+        const userEscrows = await ledger.getEscrowsByUser(user2.address);
+        expect(userEscrows.length).to.equal(1);
+      });
+    });
+
+    describe("submitProof", function () {
+      beforeEach(async function () {
+        await ledger.connect(user1).createEscrow(agreementId, valueHash, 1, 30);
+        await ledger.connect(user2).joinEscrow(0);
+      });
+
+      it("should allow initiator to submit proof", async function () {
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("Bank receipt proof"));
+
+        await ledger.connect(user1).submitProof(0, proofHash);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.initiatorProofSubmitted).to.be.true;
+        expect(escrow.proofHash).to.equal(proofHash);
+      });
+
+      it("should allow participant to submit proof", async function () {
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("File CID: QmXYZ"));
+
+        await ledger.connect(user2).submitProof(0, proofHash);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.participantProofSubmitted).to.be.true;
+      });
+
+      it("should revert if not party to escrow", async function () {
+        await ledger.connect(user3).registerUser();
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("Proof"));
+
+        await expect(
+          ledger.connect(user3).submitProof(0, proofHash)
+        ).to.be.revertedWith("Not party to escrow");
+      });
+    });
+
+    describe("confirmCompletion", function () {
+      beforeEach(async function () {
+        const escrowAmount = ethers.parseEther("1.0");
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          0, // Crypto
+          30,
+          { value: escrowAmount }
+        );
+        await ledger.connect(user2).joinEscrow(0);
+      });
+
+      it("should allow initiator to confirm", async function () {
+        await ledger.connect(user1).confirmCompletion(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.initiatorConfirmed).to.be.true;
+      });
+
+      it("should allow participant to confirm", async function () {
+        await ledger.connect(user2).confirmCompletion(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.participantConfirmed).to.be.true;
+      });
+
+      it("should release escrow when both confirm", async function () {
+        const escrowAmount = ethers.parseEther("1.0");
+        const platformFee = (escrowAmount * 2n) / 100n; // 2%
+        const expectedAmount = escrowAmount - platformFee;
+
+        const participantBalanceBefore = await ethers.provider.getBalance(user2.address);
+
+        await ledger.connect(user1).confirmCompletion(0);
+        const tx = await ledger.connect(user2).confirmCompletion(0);
+        const receipt = await tx.wait();
+
+        const gasUsed = receipt.gasUsed * receipt.gasPrice;
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.status).to.equal(2); // Completed
+
+        const participantBalanceAfter = await ethers.provider.getBalance(user2.address);
+        const balanceIncrease = participantBalanceAfter - participantBalanceBefore + gasUsed;
+
+        expect(balanceIncrease).to.be.closeTo(expectedAmount, ethers.parseEther("0.001"));
+      });
+
+      it("should revert if already confirmed", async function () {
+        await ledger.connect(user1).confirmCompletion(0);
+
+        await expect(
+          ledger.connect(user1).confirmCompletion(0)
+        ).to.be.revertedWith("Already confirmed");
+      });
+    });
+
+    describe("raiseDispute", function () {
+      beforeEach(async function () {
+        await ledger.connect(user1).createEscrow(agreementId, valueHash, 1, 30);
+        await ledger.connect(user2).joinEscrow(0);
+      });
+
+      it("should allow initiator to raise dispute", async function () {
+        await ledger.connect(user1).raiseDispute(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.disputed).to.be.true;
+        expect(escrow.status).to.equal(3); // Disputed
+      });
+
+      it("should allow participant to raise dispute", async function () {
+        await ledger.connect(user2).raiseDispute(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.disputed).to.be.true;
+      });
+
+      it("should revert if not party to escrow", async function () {
+        await ledger.connect(user3).registerUser();
+
+        await expect(
+          ledger.connect(user3).raiseDispute(0)
+        ).to.be.revertedWith("Not party to escrow");
+      });
+    });
+
+    describe("Arbiter workflow", function () {
+      let arbiter: any;
+
+      beforeEach(async function () {
+        [, , , , , arbiter] = await ethers.getSigners();
+
+        const escrowAmount = ethers.parseEther("1.0");
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          0,
+          30,
+          { value: escrowAmount }
+        );
+        await ledger.connect(user2).joinEscrow(0);
+        await ledger.connect(user1).raiseDispute(0);
+      });
+
+      it("should allow proposing arbiter", async function () {
+        await ledger.connect(user1).proposeArbiter(0, arbiter.address);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.proposedArbiter).to.equal(arbiter.address);
+        expect(escrow.initiatorApprovedArbiter).to.be.true;
+      });
+
+      it("should activate arbiter when both approve", async function () {
+        await ledger.connect(user1).proposeArbiter(0, arbiter.address);
+        await ledger.connect(user2).approveArbiter(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.activeArbiter).to.equal(arbiter.address);
+      });
+
+      it("should allow arbiter to resolve with release", async function () {
+        await ledger.connect(user1).proposeArbiter(0, arbiter.address);
+        await ledger.connect(user2).approveArbiter(0);
+
+        const participantBalanceBefore = await ethers.provider.getBalance(user2.address);
+
+        await ledger.connect(arbiter).resolveDispute(0, "release");
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.status).to.equal(2); // Completed
+
+        const participantBalanceAfter = await ethers.provider.getBalance(user2.address);
+        expect(participantBalanceAfter).to.be.gt(participantBalanceBefore);
+      });
+
+      it("should allow arbiter to resolve with refund", async function () {
+        await ledger.connect(user1).proposeArbiter(0, arbiter.address);
+        await ledger.connect(user2).approveArbiter(0);
+
+        const initiatorBalanceBefore = await ethers.provider.getBalance(user1.address);
+
+        await ledger.connect(arbiter).resolveDispute(0, "refund");
+
+        const initiatorBalanceAfter = await ethers.provider.getBalance(user1.address);
+        expect(initiatorBalanceAfter).to.be.gt(initiatorBalanceBefore);
+      });
+
+      it("should allow arbiter to resolve with split", async function () {
+        await ledger.connect(user1).proposeArbiter(0, arbiter.address);
+        await ledger.connect(user2).approveArbiter(0);
+
+        const initiatorBalanceBefore = await ethers.provider.getBalance(user1.address);
+        const participantBalanceBefore = await ethers.provider.getBalance(user2.address);
+
+        await ledger.connect(arbiter).resolveDispute(0, "split");
+
+        const initiatorBalanceAfter = await ethers.provider.getBalance(user1.address);
+        const participantBalanceAfter = await ethers.provider.getBalance(user2.address);
+
+        expect(initiatorBalanceAfter).to.be.gt(initiatorBalanceBefore);
+        expect(participantBalanceAfter).to.be.gt(participantBalanceBefore);
+      });
+
+      it("should pay arbiter fee", async function () {
+        await ledger.connect(user1).proposeArbiter(0, arbiter.address);
+        await ledger.connect(user2).approveArbiter(0);
+
+        const arbiterBalanceBefore = await ethers.provider.getBalance(arbiter.address);
+
+        const tx = await ledger.connect(arbiter).resolveDispute(0, "release");
+        const receipt = await tx.wait();
+        const gasUsed = receipt.gasUsed * receipt.gasPrice;
+
+        const arbiterBalanceAfter = await ethers.provider.getBalance(arbiter.address);
+        const arbiterFeeReceived = arbiterBalanceAfter - arbiterBalanceBefore + gasUsed;
+
+        const escrowAmount = ethers.parseEther("1.0");
+        const expectedFee = (escrowAmount * 1n) / 100n; // 1%
+
+        expect(arbiterFeeReceived).to.be.closeTo(expectedFee, ethers.parseEther("0.001"));
+      });
+    });
+
+    describe("cancelEscrow", function () {
+      it("should allow cancelling pending escrow", async function () {
+        const escrowAmount = ethers.parseEther("1.0");
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          0,
+          30,
+          { value: escrowAmount }
+        );
+
+        const balanceBefore = await ethers.provider.getBalance(user1.address);
+
+        const tx = await ledger.connect(user1).cancelEscrow(0);
+        const receipt = await tx.wait();
+        const gasUsed = receipt.gasUsed * receipt.gasPrice;
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.status).to.equal(4); // Cancelled
+
+        const balanceAfter = await ethers.provider.getBalance(user1.address);
+        const refundReceived = balanceAfter - balanceBefore + gasUsed;
+
+        expect(refundReceived).to.be.closeTo(escrowAmount, ethers.parseEther("0.001"));
+      });
+
+      it("should revert if not pending", async function () {
+        await ledger.connect(user1).createEscrow(agreementId, valueHash, 1, 30);
+        await ledger.connect(user2).joinEscrow(0);
+
+        await expect(
+          ledger.connect(user1).cancelEscrow(0)
+        ).to.be.revertedWith("Can only cancel pending escrow");
+      });
+
+      it("should revert if not initiator", async function () {
+        await ledger.connect(user1).createEscrow(agreementId, valueHash, 1, 30);
+
+        await expect(
+          ledger.connect(user2).cancelEscrow(0)
+        ).to.be.revertedWith("Only initiator can cancel");
+      });
+    });
+
+    describe("handleExpiredEscrow", function () {
+      it("should handle expired escrow and refund initiator", async function () {
+        const escrowAmount = ethers.parseEther("1.0");
+        const expirationDays = 1;
+
+        await ledger.connect(user1).createEscrow(
+          agreementId,
+          valueHash,
+          0,
+          expirationDays,
+          { value: escrowAmount }
+        );
+        await ledger.connect(user2).joinEscrow(0);
+
+        // Advance time by 2 days
+        await ethers.provider.send("evm_increaseTime", [2 * 24 * 60 * 60]);
+        await ethers.provider.send("evm_mine", []);
+
+        const balanceBefore = await ethers.provider.getBalance(user1.address);
+
+        await ledger.connect(user3).handleExpiredEscrow(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.status).to.equal(5); // Expired
+
+        const balanceAfter = await ethers.provider.getBalance(user1.address);
+        expect(balanceAfter - balanceBefore).to.equal(escrowAmount);
+      });
+
+      it("should revert if not expired", async function () {
+        await ledger.connect(user1).createEscrow(agreementId, valueHash, 1, 30);
+
+        await expect(
+          ledger.connect(user2).handleExpiredEscrow(0)
+        ).to.be.revertedWith("Not expired");
+      });
+    });
+
+    describe("View functions", function () {
+      it("should get escrows for agreement", async function () {
+        await ledger.connect(user1).createEscrow(agreementId, valueHash, 1, 30);
+        await ledger.connect(user2).createEscrow(agreementId, valueHash, 1, 30);
+
+        const escrows = await ledger.getEscrowsForAgreement(agreementId);
+        expect(escrows.length).to.equal(2);
+      });
+
+      it("should check if escrow is expired", async function () {
+        await ledger.connect(user1).createEscrow(agreementId, valueHash, 1, 1);
+
+        let isExpired = await ledger.isEscrowExpired(0);
+        expect(isExpired).to.be.false;
+
+        // Advance time
+        await ethers.provider.send("evm_increaseTime", [2 * 24 * 60 * 60]);
+        await ethers.provider.send("evm_mine", []);
+
+        isExpired = await ledger.isEscrowExpired(0);
+        expect(isExpired).to.be.true;
+      });
+    });
+
+    describe("Oracle Verification", function () {
+      let oracle: any;
+      let arbiter: any;
+
+      beforeEach(async function () {
+        [owner, devWallet, user1, user2, user3, oracle, arbiter] =
+          await ethers.getSigners();
+
+        // Re-deploy with new signers
+        const LedgerFactory = await ethers.getContractFactory(
+          "AgreementLedger"
+        );
+        ledger = await LedgerFactory.deploy(devWallet.address);
+        await ledger.waitForDeployment();
+
+        // Authorize oracle
+        await ledger.authorizeOracle(oracle.address, true);
+      });
+
+      it("should allow owner to authorize oracle", async function () {
+        expect(await ledger.authorizedOracles(oracle.address)).to.be.true;
+      });
+
+      it("should allow owner to deauthorize oracle", async function () {
+        await ledger.authorizeOracle(oracle.address, false);
+        expect(await ledger.authorizedOracles(oracle.address)).to.be.false;
+      });
+
+      it("should reject oracle authorization from non-owner", async function () {
+        await expect(
+          ledger.connect(user1).authorizeOracle(user2.address, true)
+        ).to.be.revertedWithCustomError(ledger, "OwnableUnauthorizedAccount");
+      });
+
+      it("should allow authorized oracle to verify file deliverable", async function () {
+        await ledger.connect(user1).registerUser();
+        await ledger.connect(user2).registerUser();
+        const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Agreement"));
+        await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+        const valueHash = ethers.keccak256(
+          ethers.toUtf8Bytes("File deliverable")
+        );
+        await ledger.connect(user1).createEscrow(0, valueHash, 2, 30); // FileDeliverable
+
+        await ledger.connect(user2).joinEscrow(0);
+
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("IPFS CID"));
+        await ledger.connect(user1).submitProof(0, proofHash);
+
+        await ledger
+          .connect(oracle)
+          .submitOracleVerification(0, true, proofHash);
+
+        expect(await ledger.oracleVerified(0)).to.be.true;
+        expect(await ledger.oracleVerificationHash(0)).to.equal(proofHash);
+      });
+
+      it("should auto-confirm initiator when oracle verifies", async function () {
+        await ledger.connect(user1).registerUser();
+        await ledger.connect(user2).registerUser();
+        const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Agreement"));
+        await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+        const valueHash = ethers.keccak256(
+          ethers.toUtf8Bytes("Service deliverable")
+        );
+        await ledger.connect(user1).createEscrow(0, valueHash, 4, 30); // Service
+
+        await ledger.connect(user2).joinEscrow(0);
+
+        const proofHash = ethers.keccak256(
+          ethers.toUtf8Bytes("Service proof")
+        );
+        await ledger.connect(user1).submitProof(0, proofHash);
+
+        await ledger
+          .connect(oracle)
+          .submitOracleVerification(0, true, proofHash);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.initiatorConfirmed).to.be.true;
+      });
+
+      it("should auto-release when oracle verifies and both parties confirm", async function () {
+        await ledger.connect(user1).registerUser();
+        await ledger.connect(user2).registerUser();
+        const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Agreement"));
+        await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+        const valueHash = ethers.keccak256(
+          ethers.toUtf8Bytes("File deliverable")
+        );
+        const escrowAmount = ethers.parseEther("1.0");
+        await ledger
+          .connect(user1)
+          .createEscrow(0, valueHash, 0, 30, { value: escrowAmount }); // Crypto
+
+        await ledger.connect(user2).joinEscrow(0);
+
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("Proof"));
+        await ledger.connect(user1).submitProof(0, proofHash);
+
+        // Oracle verifies (auto-confirms initiator)
+        await ledger
+          .connect(oracle)
+          .submitOracleVerification(0, true, proofHash);
+
+        // Participant confirms manually
+        await ledger.connect(user2).confirmCompletion(0);
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.status).to.equal(2); // Completed
+      });
+
+      it("arbiter should override oracle verification", async function () {
+        await ledger.connect(user1).registerUser();
+        await ledger.connect(user2).registerUser();
+        const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Agreement"));
+        await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+        const valueHash = ethers.keccak256(
+          ethers.toUtf8Bytes("File deliverable")
+        );
+        const escrowAmount = ethers.parseEther("1.0");
+        await ledger
+          .connect(user1)
+          .createEscrow(0, valueHash, 2, 30, { value: escrowAmount }); // FileDeliverable
+
+        await ledger.connect(user2).joinEscrow(0);
+
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("Proof"));
+        await ledger.connect(user1).submitProof(0, proofHash);
+
+        // Oracle says no
+        await ledger
+          .connect(oracle)
+          .submitOracleVerification(0, false, proofHash);
+
+        // Raise dispute
+        await ledger.connect(user1).raiseDispute(0);
+
+        // Propose and approve arbiter
+        await ledger.connect(user1).proposeArbiter(0, arbiter.address);
+        await ledger.connect(user2).approveArbiter(0);
+
+        // Arbiter overrides oracle and releases
+        await ledger.connect(arbiter).resolveDispute(0, "release");
+
+        const escrow = await ledger.getEscrow(0);
+        expect(escrow.status).to.equal(2); // Completed - arbiter overrode oracle
+      });
+
+      it("should reject verification from unauthorized oracle", async function () {
+        await ledger.connect(user1).registerUser();
+        await ledger.connect(user2).registerUser();
+        const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Agreement"));
+        await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+        const valueHash = ethers.keccak256(
+          ethers.toUtf8Bytes("File deliverable")
+        );
+        await ledger.connect(user1).createEscrow(0, valueHash, 2, 30);
+
+        await ledger.connect(user2).joinEscrow(0);
+
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("Proof"));
+
+        await expect(
+          ledger.connect(user3).submitOracleVerification(0, true, proofHash)
+        ).to.be.revertedWith("Not authorized oracle");
+      });
+
+      it("should reject verification for non-active escrow", async function () {
+        await ledger.connect(user1).registerUser();
+        await ledger.connect(user2).registerUser();
+        const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Agreement"));
+        await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+        const valueHash = ethers.keccak256(
+          ethers.toUtf8Bytes("File deliverable")
+        );
+        await ledger.connect(user1).createEscrow(0, valueHash, 2, 30);
+
+        // Escrow is Pending, not Active
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("Proof"));
+
+        await expect(
+          ledger.connect(oracle).submitOracleVerification(0, true, proofHash)
+        ).to.be.revertedWith("Escrow not active");
+      });
+
+      it("should return oracle verification details", async function () {
+        await ledger.connect(user1).registerUser();
+        await ledger.connect(user2).registerUser();
+        const detailsHash = ethers.keccak256(ethers.toUtf8Bytes("Agreement"));
+        await ledger.connect(user1).createAgreement(user2.address, detailsHash);
+
+        const valueHash = ethers.keccak256(
+          ethers.toUtf8Bytes("File deliverable")
+        );
+        await ledger.connect(user1).createEscrow(0, valueHash, 2, 30);
+
+        await ledger.connect(user2).joinEscrow(0);
+
+        const proofHash = ethers.keccak256(ethers.toUtf8Bytes("Proof"));
+        await ledger.connect(user1).submitProof(0, proofHash);
+
+        await ledger
+          .connect(oracle)
+          .submitOracleVerification(0, true, proofHash);
+
+        const verification = await ledger.getOracleVerification(0);
+        expect(verification.verified).to.be.true;
+        expect(verification.verificationHash).to.equal(proofHash);
+        expect(verification.verifiedAt).to.be.gt(0);
+      });
+    });
+  });
 });
