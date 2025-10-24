@@ -204,15 +204,4 @@ The contract includes an oracle system for automatic verification of FileDeliver
 
 ---
 
-## Local Development & Deployment
-
-This project is a Hardhat environment.
-
-### 1. Setup
-
-Clone the repository and install dependencies:
-
-```bash
-git clone <repository_url>
-cd agreement-ledger
-pnpm install
+This project is a **Hardhat** environment. It provides a complete toolkit to compile, test, and deploy this smart contract.
