@@ -204,4 +204,4 @@ The contract includes an oracle system for automatic verification of FileDeliver
 
 ---
 
-This project is a **Hardhat** environment. It provides a complete toolkit to compile, test, and deploy this smart contract.
+This project is a **Hardhat**  environment. It provides a complete toolkit to compile, test, and deploy this smart contract.
