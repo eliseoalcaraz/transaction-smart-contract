@@ -215,30 +215,33 @@ contract AgreementLedger is Ownable, ReentrancyGuard {
     // =========================
     // REGISTRATION
     // =========================
-    function registerUser() external {
-        require(!registered[msg.sender], "Already registered");
-        registered[msg.sender] = true;
+    function registerUser(address user) external onlyOwner {
+        require(user != address(0), "Invalid user address");
+        require(!registered[user], "Already registered");
+
+        registered[user] = true;
 
         uint256 reward = 100 * 10**18;
-        _mint(msg.sender, reward);
+        _mint(user, reward);
 
-        emit Registered(msg.sender, reward);
+        emit Registered(user, reward);
     }
+
 
     // =========================
     // AGREEMENTS
     // =========================
-    function createAgreement(address otherParty, bytes32 detailsHash) external {
-        require(registered[msg.sender], "Sender not registered");
-        require(registered[otherParty], "Other party not registered");
-        require(msg.sender != otherParty, "Cannot agree with self");
+    function createAgreement(address partyA, address partyB, bytes32 detailsHash) external onlyOwner {
+        require(registered[partyA], "Party A not registered");
+        require(registered[partyB], "Party B not registered");
+        require(partyA != partyB, "Cannot agree with self");
 
-        _processVerificationFee(msg.sender);
-        _processVerificationFee(otherParty);
+        _processVerificationFee(partyA);
+        _processVerificationFee(partyB);
 
         Agreement memory newAgreement = Agreement({
-            partyA: msg.sender,
-            partyB: otherParty,
+            partyA: partyA,
+            partyB: partyB,
             details: detailsHash,
             timestamp: block.timestamp
         });
@@ -246,12 +249,12 @@ contract AgreementLedger is Ownable, ReentrancyGuard {
         agreements.push(newAgreement);
         uint256 id = agreements.length - 1;
 
-        agreementsByParty[msg.sender].push(id);
-        agreementsByParty[otherParty].push(id);
+        agreementsByParty[partyA].push(id);
+        agreementsByParty[partyB].push(id);
 
         emit AgreementCreated(
-            msg.sender,
-            otherParty,
+            partyA,
+            partyB,
             VERIFY_FEE * 2,
             (VERIFY_FEE * 2 * BURN_PERCENT) / 100,
             (VERIFY_FEE * 2 * (100 - BURN_PERCENT)) / 100,
@@ -273,16 +276,16 @@ contract AgreementLedger is Ownable, ReentrancyGuard {
     // =========================
     // REPORTS
     // =========================
-    function reportIssue(uint256 agreementId, address reportedParty, bytes32 reason) external {
+    function reportIssue(uint256 agreementId, address reporterParty, address reportedParty, bytes32 reason) external onlyOwner {
         require(agreementId < agreements.length, "Invalid agreement ID");
         Agreement storage agreement = agreements[agreementId];
 
-        require(msg.sender == agreement.partyA || msg.sender == agreement.partyB, "Not part of the agreement");
+        require(reporterParty == agreement.partyA || reporterParty == agreement.partyB, "Not part of the agreement");
         require(reportedParty == agreement.partyA || reportedParty == agreement.partyB, "Reported party not in agreement");
-        require(msg.sender != reportedParty, "Cannot report yourself");
+        require(reporterParty != reportedParty, "Cannot report yourself");
 
         reports.push(Report({
-            reporter: msg.sender,
+            reporter: reporterParty,
             reportedParty: reportedParty,
             agreementId: agreementId,
             reason: reason,
@@ -290,10 +293,10 @@ contract AgreementLedger is Ownable, ReentrancyGuard {
         }));
 
         uint256 reportId = reports.length - 1;
-        reportsByReporter[msg.sender].push(reportId);
+        reportsByReporter[reporterParty].push(reportId);
         reportsAgainstParty[reportedParty].push(reportId);
 
-        emit ReportCreated(msg.sender, reportedParty, agreementId, reason, block.timestamp);
+        emit ReportCreated(reporterParty, reportedParty, agreementId, reason, block.timestamp);
     }
 
     // =========================
