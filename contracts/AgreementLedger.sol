@@ -215,10 +215,10 @@ contract AgreementLedger is Ownable, ReentrancyGuard {
     // =========================
     // REGISTRATION
     // =========================
-    function registerUser(address user) external {
+    function registerUser(address user) external onlyOwner {
         require(user != address(0), "Invalid user address");
         require(!registered[user], "Already registered");
-       
+
         registered[user] = true;
 
         uint256 reward = 100 * 10**18;
@@ -227,10 +227,11 @@ contract AgreementLedger is Ownable, ReentrancyGuard {
         emit Registered(user, reward);
     }
 
+
     // =========================
     // AGREEMENTS
     // =========================
-    function createAgreement(address partyA, address partyB, bytes32 detailsHash) external {
+    function createAgreement(address partyA, address partyB, bytes32 detailsHash) external onlyOwner {
         require(registered[partyA], "Party A not registered");
         require(registered[partyB], "Party B not registered");
         require(partyA != partyB, "Cannot agree with self");
@@ -275,7 +276,7 @@ contract AgreementLedger is Ownable, ReentrancyGuard {
     // =========================
     // REPORTS
     // =========================
-    function reportIssue(uint256 agreementId, address reporterParty, address reportedParty, bytes32 reason) external {
+    function reportIssue(uint256 agreementId, address reporterParty, address reportedParty, bytes32 reason) external onlyOwner {
         require(agreementId < agreements.length, "Invalid agreement ID");
         Agreement storage agreement = agreements[agreementId];
 
