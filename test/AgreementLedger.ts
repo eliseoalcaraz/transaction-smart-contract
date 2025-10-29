@@ -1,19 +1,20 @@
 import { expect } from "chai";
 import { network } from "hardhat";
+import type { Signer, Contract, BigNumberish } from "ethers";
 const { ethers } = await network.connect();
 
 
 describe("AgreementLedger", function () {
-  let ledger: any;
-  let owner: any;
-  let devWallet: any;
-  let user1: any;
-  let user2: any;
-  let user3: any;
-
-  const initialMint = ethers.parseEther("1000000");
-  const registerReward = ethers.parseEther("100");
-  const verifyFee = ethers.parseEther("10");
+  let ledger: Contract;
+  let owner: Signer;
+  let devWallet: Signer;
+  let user1: Signer;
+  let user2: Signer;
+  let user3: Signer;
+  
+  const initialMint: BigNumberish = ethers.parseEther("1000000");
+  const registerReward: BigNumberish = ethers.parseEther("100");
+  const verifyFee: BigNumberish = ethers.parseEther("10");
   const burnPercent = 20n;
 
   beforeEach(async function () {
