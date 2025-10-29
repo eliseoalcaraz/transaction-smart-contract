@@ -470,7 +470,7 @@ describe("AgreementLedger", function () {
     });
 
     describe("Arbiter workflow", function () {
-      let arbiter: any;
+      let arbiter: Signer;
 
       beforeEach(async function () {
         [, , , , , arbiter] = await ethers.getSigners();
@@ -673,8 +673,8 @@ describe("AgreementLedger", function () {
     });
 
     describe("Oracle Verification", function () {
-      let oracle: any;
-      let arbiter: any;
+      let oracle: Signer;
+      let arbiter: Signer;
 
       beforeEach(async function () {
         [owner, devWallet, user1, user2, user3, oracle, arbiter] =
